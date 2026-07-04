@@ -1,83 +1,61 @@
 import requests
 from datetime import datetime
-from bs4 import BeautifulSoup
+import re
 
 # =========================
-# 通用请求
+# 请求
 # =========================
 def get_html(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
     try:
+        headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
+        r.encoding = "utf-8"
         return r.text
     except Exception as e:
-        print("请求失败:", url, e)
+        print("request error:", e)
         return ""
 
 # =========================
-# 百度热榜
+# 从HTML中粗暴提取标题（不依赖bs4）
+# =========================
+def extract_titles(html):
+    # 用正则抓 title / a 标签文本（极简稳定）
+    titles = re.findall(r'title="(.*?)"', html)
+    clean = []
+
+    for t in titles:
+        t = t.strip()
+        if 4 < len(t) < 60:
+            clean.append(t)
+
+    return clean[:30]
+
+
+# =========================
+# 百度
 # =========================
 def fetch_baidu():
-    url = "https://top.baidu.com/board"
-    html = get_html(url)
-    soup = BeautifulSoup(html, "html.parser")
-
-    items = []
-
-    for item in soup.select("div.category-wrap_iQLoo_1iK3h"):
-        try:
-            title = item.select_one("div.c-single-text-ellipsis").text.strip()
-            items.append({
-                "title": title,
-                "source": "baidu"
-            })
-        except:
-            continue
-
-    return items
+    html = get_html("https://top.baidu.com/board")
+    return extract_titles(html)
 
 
 # =========================
-# 微博热搜（简化版）
+# 微博
 # =========================
 def fetch_weibo():
-    url = "https://s.weibo.com/top/summary"
-    html = get_html(url)
-    soup = BeautifulSoup(html, "html.parser")
-
-    items = []
-
-    for item in soup.select("td.td-02"):
-        a = item.select_one("a")
-        if a:
-            title = a.text.strip()
-            if title:
-                items.append({
-                    "title": title,
-                    "source": "weibo"
-                })
-
-    return items
+    html = get_html("https://s.weibo.com/top/summary")
+    return extract_titles(html)
 
 
 # =========================
-# 过滤层（升级版）
+# 过滤
 # =========================
-def is_useful(title):
-
-    bad_words = [
-        "会议", "讲话", "部署", "强调", "学习",
-        "政府", "通报", "意见", "精神", "调研"
-    ]
-
-    for w in bad_words:
-        if w in title:
-            return False
-
-    return True
+def is_bad(title):
+    bad = ["会议", "讲话", "部署", "通报", "政府", "学习"]
+    for b in bad:
+        if b in title:
+            return True
+    return False
 
 
 # =========================
@@ -85,52 +63,35 @@ def is_useful(title):
 # =========================
 def main():
 
-    print("🔥 开始抓取真实热点...")
+    print("🔥 START HOT REPORT")
 
     baidu = fetch_baidu()
     weibo = fetch_weibo()
 
-    print("百度数量:", len(baidu))
-    print("微博数量:", len(weibo))
-
     items = baidu + weibo
 
-    # 过滤
-    items = [i for i in items if is_useful(i["title"])]
+    print("raw:", len(items))
 
-    # 去重
-    seen = set()
-    final_items = []
+    items = [i for i in items if not is_bad(i)]
 
-    for i in items:
-        if i["title"] not in seen:
-            seen.add(i["title"])
-            final_items.append(i)
+    items = list(dict.fromkeys(items))[:20]
 
-    # 取前20
-    final_items = final_items[:20]
-
-    # 输出日报
     date = datetime.now().strftime("%Y-%m-%d")
 
     report = []
-    report.append("🔥 中国每日真实热点日报")
+    report.append("🔥 中国真实热点日报（稳定版）")
     report.append(f"📅 {date}")
     report.append("")
-    report.append("——————————————")
 
-    for i, item in enumerate(final_items, 1):
-        report.append(f"{i}. {item['title']}")
-        report.append(f"来源：{item['source']}")
-        report.append("")
+    for i, t in enumerate(items, 1):
+        report.append(f"{i}. {t}")
 
-    final_text = "\n".join(report)
+    final = "\n".join(report)
 
-    print(final_text)
+    print(final)
 
-    # 保存文件（GitHub可见）
     with open(f"hot_report_{date}.txt", "w", encoding="utf-8") as f:
-        f.write(final_text)
+        f.write(final)
 
 
 if __name__ == "__main__":
