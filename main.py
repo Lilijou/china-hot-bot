@@ -1,93 +1,70 @@
-import requests
+from datetime import datetime
 
 # =========================
-# 过滤层 V1（核心升级）
+# 模拟热点数据（后面可升级真实抓取）
 # =========================
-def is_useful_hot(title: str) -> bool:
-
-    bad_keywords = [
-        "总书记", "会议", "调研", "工作", "通报",
-        "部署", "学习", "强调", "指出", "召开",
-        "政府", "办公室", "委员会", "政策", "意见",
-        "精神", "讲话", "活动", "会议精神"
+def fetch_baidu():
+    return [
+        "AI行业迎来重大技术突破",
+        "某地召开经济发展相关会议",
+        "明星突发事件引发全网讨论"
     ]
 
-    good_keywords = [
-        "AI", "人工智能", "爆料", "曝光", "冲突",
-        "火灾", "地震", "事故", "暴涨", "裁员",
-        "明星", "娱乐", "电影", "游戏", "科技",
-        "OpenAI", "GPT", "ChatGPT", "马斯克"
+def fetch_weibo():
+    return [
+        "娱乐圈爆料持续发酵引热议",
+        "某科技公司发布新AI模型",
+        "社会热点事件引发关注"
     ]
 
-    text = title.lower()
+# =========================
+# 过滤层（简化版）
+# =========================
+def is_useful_hot(title):
+    bad_keywords = ["会议", "通知", "调研", "部署", "政府"]
 
-    # ❌ 强过滤（政务/空内容）
     for kw in bad_keywords:
         if kw in title:
             return False
 
-    # ✅ 强兴趣内容优先保留
-    for kw in good_keywords:
-        if kw.lower() in text:
-            return True
-
-    # 默认规则：太短的不要
-    if len(title) < 6:
-        return False
-
     return True
 
-
 # =========================
-# 模拟抓取（先保证稳定运行）
-# =========================
-def fetch_baidu():
-    try:
-        r = requests.get("https://top.baidu.com/board", timeout=10)
-        return [
-            {"title": "AI行业最新突破引发关注", "source": "baidu"},
-            {"title": "某地召开经济工作会议", "source": "baidu"},
-            {"title": "明星突发事件引热议", "source": "baidu"},
-        ]
-    except Exception as e:
-        print("baidu error:", e)
-        return []
-
-
-def fetch_weibo():
-    try:
-        r = requests.get(
-            "https://s.weibo.com/top/summary",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10
-        )
-        return [
-            {"title": "娱乐圈爆料事件持续发酵", "source": "weibo"},
-            {"title": "某政府部门发布通知", "source": "weibo"},
-            {"title": "AI模型更新引发讨论", "source": "weibo"},
-        ]
-    except Exception as e:
-        print("weibo error:", e)
-        return []
-
-
-# =========================
-# 主程序
+# 生成中文日报
 # =========================
 def main():
-    print("START RUN")
+    baidu = fetch_baidu()
+    weibo = fetch_weibo()
 
-    raw_items = fetch_baidu() + fetch_weibo()
+    items = baidu + weibo
 
-    # 🔥 关键：过滤层生效
-    items = [i for i in raw_items if is_useful_hot(i["title"])]
+    # 过滤
+    items = [i for i in items if is_useful_hot(i)]
 
-    print("RAW ITEMS:", len(raw_items))
-    print("FILTERED ITEMS:", len(items))
-    print("")
+    date = datetime.now().strftime("%Y年%m月%d日")
 
-    for i, item in enumerate(items, 1):
-        print(i, item["title"], "-", item["source"])
+    report = []
+    report.append("🔥 中国每日热点日报")
+    report.append(f"📅 {date}")
+    report.append("")
+    report.append("——————————————")
+
+    for i, title in enumerate(items, 1):
+        report.append(f"{i}. {title}")
+
+    report.append("")
+    report.append("📊 数据来源：百度热榜 / 微博热搜（模拟版）")
+
+    final_text = "\n".join(report)
+
+    # 输出到 GitHub Actions 日志
+    print(final_text)
+
+    # 保存成文件（关键）
+    filename = f"每日热点日报_{date}.txt"
+
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(final_text)
 
 
 if __name__ == "__main__":
