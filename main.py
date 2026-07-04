@@ -1,69 +1,135 @@
+import requests
 from datetime import datetime
+from bs4 import BeautifulSoup
 
 # =========================
-# 模拟热点数据（后面可升级真实抓取）
+# 通用请求
+# =========================
+def get_html(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        return r.text
+    except Exception as e:
+        print("请求失败:", url, e)
+        return ""
+
+# =========================
+# 百度热榜
 # =========================
 def fetch_baidu():
-    return [
-        "AI行业迎来重大技术突破",
-        "某地召开经济发展相关会议",
-        "明星突发事件引发全网讨论"
-    ]
+    url = "https://top.baidu.com/board"
+    html = get_html(url)
+    soup = BeautifulSoup(html, "html.parser")
 
+    items = []
+
+    for item in soup.select("div.category-wrap_iQLoo_1iK3h"):
+        try:
+            title = item.select_one("div.c-single-text-ellipsis").text.strip()
+            items.append({
+                "title": title,
+                "source": "baidu"
+            })
+        except:
+            continue
+
+    return items
+
+
+# =========================
+# 微博热搜（简化版）
+# =========================
 def fetch_weibo():
-    return [
-        "娱乐圈爆料持续发酵引热议",
-        "某科技公司发布新AI模型",
-        "社会热点事件引发关注"
+    url = "https://s.weibo.com/top/summary"
+    html = get_html(url)
+    soup = BeautifulSoup(html, "html.parser")
+
+    items = []
+
+    for item in soup.select("td.td-02"):
+        a = item.select_one("a")
+        if a:
+            title = a.text.strip()
+            if title:
+                items.append({
+                    "title": title,
+                    "source": "weibo"
+                })
+
+    return items
+
+
+# =========================
+# 过滤层（升级版）
+# =========================
+def is_useful(title):
+
+    bad_words = [
+        "会议", "讲话", "部署", "强调", "学习",
+        "政府", "通报", "意见", "精神", "调研"
     ]
 
-# =========================
-# 过滤层（简化版）
-# =========================
-def is_useful_hot(title):
-    bad_keywords = ["会议", "通知", "调研", "部署", "政府"]
-
-    for kw in bad_keywords:
-        if kw in title:
+    for w in bad_words:
+        if w in title:
             return False
 
     return True
 
+
 # =========================
-# 生成中文日报
+# 主程序
 # =========================
 def main():
+
+    print("🔥 开始抓取真实热点...")
+
     baidu = fetch_baidu()
     weibo = fetch_weibo()
+
+    print("百度数量:", len(baidu))
+    print("微博数量:", len(weibo))
 
     items = baidu + weibo
 
     # 过滤
-    items = [i for i in items if is_useful_hot(i)]
+    items = [i for i in items if is_useful(i["title"])]
 
-    date = datetime.now().strftime("%Y年%m月%d日")
+    # 去重
+    seen = set()
+    final_items = []
+
+    for i in items:
+        if i["title"] not in seen:
+            seen.add(i["title"])
+            final_items.append(i)
+
+    # 取前20
+    final_items = final_items[:20]
+
+    # 输出日报
+    date = datetime.now().strftime("%Y-%m-%d")
 
     report = []
-    report.append("🔥 中国每日热点日报")
+    report.append("🔥 中国每日真实热点日报")
     report.append(f"📅 {date}")
     report.append("")
     report.append("——————————————")
 
-    for i, title in enumerate(items, 1):
-        report.append(f"{i}. {title}")
-
-    report.append("")
-    report.append("📊 数据来源：百度热榜 / 微博热搜（模拟版）")
+    for i, item in enumerate(final_items, 1):
+        report.append(f"{i}. {item['title']}")
+        report.append(f"来源：{item['source']}")
+        report.append("")
 
     final_text = "\n".join(report)
 
-    # 输出到 GitHub Actions 日志
     print(final_text)
 
-    # 保存成文件（关键）
-    filename = f"每日热点日报_{date}.txt"
-
-    with open(filename, "w", encoding="utf-8") as f:
+    # 保存文件（GitHub可见）
+    with open(f"hot_report_{date}.txt", "w", encoding="utf-8") as f:
         f.write(final_text)
 
 
