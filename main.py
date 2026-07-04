@@ -1,98 +1,57 @@
 import requests
 from datetime import datetime
-import re
 
-# =========================
-# 请求
-# =========================
-def get_html(url):
+def fetch_zhihu():
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=10)
-        r.encoding = "utf-8"
-        return r.text
-    except Exception as e:
-        print("request error:", e)
-        return ""
+        url = "https://tenapi.cn/v2/zhihuhot"
+        r = requests.get(url, timeout=10)
+        data = r.json()["data"]
 
-# =========================
-# 从HTML中粗暴提取标题（不依赖bs4）
-# =========================
-def extract_titles(html):
-    # 用正则抓 title / a 标签文本（极简稳定）
-    titles = re.findall(r'title="(.*?)"', html)
-    clean = []
+        items = []
+        for i in data[:10]:
+            items.append({
+                "title": i["title"],
+                "hot": i.get("hot", 0),
+                "source": "zhihu"
+            })
+        return items
+    except:
+        return []
 
-    for t in titles:
-        t = t.strip()
-        if 4 < len(t) < 60:
-            clean.append(t)
+def fetch_toutiao():
+    try:
+        url = "https://tenapi.cn/v2/baiduhot"
+        r = requests.get(url, timeout=10)
+        data = r.json()["data"]
 
-    return clean[:30]
+        items = []
+        for i in data[:10]:
+            items.append({
+                "title": i["name"],
+                "hot": i.get("hot", 0),
+                "source": "baidu"
+            })
+        return items
+    except:
+        return []
 
-
-# =========================
-# 百度
-# =========================
-def fetch_baidu():
-    html = get_html("https://top.baidu.com/board")
-    return extract_titles(html)
-
-
-# =========================
-# 微博
-# =========================
-def fetch_weibo():
-    html = get_html("https://s.weibo.com/top/summary")
-    return extract_titles(html)
-
-
-# =========================
-# 过滤
-# =========================
-def is_bad(title):
-    bad = ["会议", "讲话", "部署", "通报", "政府", "学习"]
-    for b in bad:
-        if b in title:
-            return True
-    return False
-
-
-# =========================
-# 主程序
-# =========================
 def main():
-
-    print("🔥 START HOT REPORT")
-
-    baidu = fetch_baidu()
-    weibo = fetch_weibo()
-
-    items = baidu + weibo
-
-    print("raw:", len(items))
-
-    items = [i for i in items if not is_bad(i)]
-
-    items = list(dict.fromkeys(items))[:20]
+    items = fetch_zhihu() + fetch_toutiao()
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    report = []
-    report.append("🔥 中国真实热点日报（稳定版）")
-    report.append(f"📅 {date}")
-    report.append("")
-
-    for i, t in enumerate(items, 1):
-        report.append(f"{i}. {t}")
-
-    final = "\n".join(report)
-
-    print(final)
-
     with open(f"hot_report_{date}.txt", "w", encoding="utf-8") as f:
-        f.write(final)
+        f.write("🔥 中国真实热点日报（稳定版）\n")
+        f.write(f"📅 {date}\n\n")
 
+        if not items:
+            f.write("⚠️ 无数据（接口失败）\n")
+            return
+
+        for i, item in enumerate(items, 1):
+            f.write(f"{i}. {item['title']}\n")
+            f.write(f"   来源: {item['source']}\n")
+            f.write(f"   热度: {item['hot']}\n\n")
 
 if __name__ == "__main__":
     main()
