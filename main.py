@@ -1,105 +1,130 @@
 import requests
 from datetime import datetime
 
-# ---------- 安全请求封装 ----------
-def safe_get_json(url, headers=None):
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-
-        if r.status_code != 200:
-            return None
-
-        if not r.text or len(r.text.strip()) == 0:
-            return None
-
-        return r.json()
-
-    except Exception:
-        return None
+# ========== CONFIG ==========
+TG_TOKEN = None
+TG_CHAT_ID = None
 
 
-# ---------- HackerNews ----------
-def fetch_hn():
+def load_secrets():
+    import os
+    global TG_TOKEN, TG_CHAT_ID
+    TG_TOKEN = os.getenv("TG_TOKEN")
+    TG_CHAT_ID = os.getenv("TG_CHAT_ID")
+
+
+# ========== DATA SOURCES (海外稳定源) ==========
+def fetch_hackernews():
     url = "https://hacker-news.firebaseio.com/v0/topstories.json"
-    ids = safe_get_json(url)
-
-    if not ids:
-        return []
+    ids = requests.get(url, timeout=10).json()[:10]
 
     items = []
-    for i in ids[:10]:
-        item = safe_get_json(f"https://hacker-news.firebaseio.com/v0/item/{i}.json")
+    for i in ids:
+        item = requests.get(
+            f"https://hacker-news.firebaseio.com/v0/item/{i}.json",
+            timeout=10
+        ).json()
+
         if item and "title" in item:
             items.append({
                 "title": item["title"],
-                "source": "HackerNews"
+                "source": "HackerNews",
+                "url": item.get("url", "")
+            })
+    return items
+
+
+def fetch_reddit_worldnews():
+    url = "https://www.reddit.com/r/worldnews/hot.json?limit=10"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    data = requests.get(url, headers=headers, timeout=10).json()
+
+    items = []
+    for post in data["data"]["children"]:
+        d = post["data"]
+        items.append({
+            "title": d["title"],
+            "source": "Reddit",
+            "url": "https://reddit.com" + d["permalink"]
+        })
+
+    return items
+
+
+def fetch_producthunt():
+    url = "https://www.producthunt.com/feed"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    text = requests.get(url, headers=headers, timeout=10).text
+
+    # 简化抓取（稳定优先，不做复杂解析）
+    lines = [l for l in text.split("\n") if "<title>" in l][:10]
+
+    items = []
+    for l in lines:
+        title = l.replace("<title>", "").replace("</title>", "").strip()
+        if "Product Hunt" not in title:
+            items.append({
+                "title": title,
+                "source": "ProductHunt",
+                "url": ""
             })
 
     return items
 
 
-# ---------- Reddit（稳定UA） ----------
-def fetch_reddit():
-    url = "https://www.reddit.com/r/worldnews/top.json?limit=10"
+# ========== FORMAT ==========
+def build_report(items):
+    date = datetime.now().strftime("%Y-%m-%d")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    text = f"🌍 GLOBAL HOT DAILY REPORT\n📅 {date}\n\n"
 
-    data = safe_get_json(url, headers=headers)
+    for i, item in enumerate(items[:30], 1):
+        text += f"{i}. {item['title']}\n"
+        text += f"来源: {item['source']}\n\n"
 
-    if not data:
-        return []
+    return text
+
+
+# ========== OUTPUT ==========
+def save_file(content):
+    filename = f"global_hot_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(content)
+    return filename
+
+
+def send_telegram(msg):
+    if not TG_TOKEN or not TG_CHAT_ID:
+        print("Telegram not configured")
+        return
+
+    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": TG_CHAT_ID,
+        "text": msg[:4000]
+    })
+
+
+# ========== MAIN ==========
+def main():
+    load_secrets()
 
     items = []
     try:
-        children = data["data"]["children"]
-        for c in children:
-            t = c["data"].get("title")
-            if t:
-                items.append({
-                    "title": t,
-                    "source": "Reddit"
-                })
-    except:
-        pass
+        items += fetch_hackernews()
+        items += fetch_reddit_worldnews()
+        items += fetch_producthunt()
+    except Exception as e:
+        items = [{"title": f"数据源失败: {str(e)}", "source": "system", "url": ""}]
 
-    return items
+    report = build_report(items)
+    filename = save_file(report)
 
+    send_telegram(report)
 
-# ---------- 生成报告 ----------
-def generate_report(items):
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    lines = []
-    lines.append("🔥 GLOBAL HOT DAILY REPORT (V9 STABLE)")
-    lines.append(today)
-    lines.append("")
-
-    if not items:
-        lines.append("⚠️ No data available (all sources failed, fallback mode)")
-        lines.append("System is running in safe mode.")
-    else:
-        for i, item in enumerate(items[:30], 1):
-            lines.append(f"{i}. {item['title']}")
-            lines.append(f"来源: {item['source']}")
-            lines.append("")
-
-    return "\n".join(lines)
-
-
-# ---------- 主函数 ----------
-def main():
-    items = fetch_reddit() + fetch_hn()
-
-    report = generate_report(items)
-
-    filename = f"global_hot_{datetime.now().strftime('%Y-%m-%d')}.txt"
-
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(report)
-
-    print("DONE:", filename)
+    print("REPORT GENERATED:", filename)
 
 
 if __name__ == "__main__":
