@@ -8,127 +8,172 @@ TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
 
 # =========================
-# 1. HOT FEED
+# SAFE REQUEST CORE
+# =========================
+
+def safe_get_json(url, headers=None):
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+
+        if r.status_code != 200:
+            print(f"[WARN] HTTP {r.status_code} -> {url}")
+            return None
+
+        # 防止 HTML / 空内容炸 json
+        if not r.text or r.text.strip() == "":
+            print(f"[WARN] EMPTY RESPONSE -> {url}")
+            return None
+
+        return r.json()
+
+    except Exception as e:
+        print(f"[ERROR] JSON FAIL -> {url} | {e}")
+        return None
+
+
+# =========================
+# 1. HACKER NEWS
 # =========================
 
 def fetch_hn():
     url = "https://hacker-news.firebaseio.com/v0/topstories.json"
-    ids = requests.get(url, timeout=10).json()[:10]
+    ids = safe_get_json(url)
+
+    if not ids:
+        return []
 
     items = []
-    for i in ids:
-        item = requests.get(
+    for i in ids[:10]:
+        item = safe_get_json(
             f"https://hacker-news.firebaseio.com/v0/item/{i}.json"
-        ).json()
+        )
 
         if item and "title" in item:
             items.append({
                 "title": item["title"],
                 "source": "HackerNews"
             })
+
     return items
 
+
+# =========================
+# 2. REDDIT（关键修复点）
+# =========================
 
 def fetch_reddit():
     url = "https://www.reddit.com/r/worldnews/hot.json?limit=10"
-    headers = {"User-Agent": "Mozilla/5.0"}
 
-    data = requests.get(url, headers=headers, timeout=10).json()
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+
+    data = safe_get_json(url, headers)
+
+    if not data:
+        return []
 
     items = []
-    for p in data["data"]["children"]:
-        d = p["data"]
-        items.append({
-            "title": d["title"],
-            "source": "Reddit"
-        })
+    try:
+        for p in data["data"]["children"]:
+            d = p["data"]
+            items.append({
+                "title": d["title"],
+                "source": "Reddit"
+            })
+    except:
+        pass
 
     return items
 
 
+# =========================
+# 3. RSS（容错版）
+# =========================
+
 def fetch_rss():
     feeds = [
-        ("https://news.google.com/rss", "GoogleNews"),
         ("https://feeds.bbci.co.uk/news/rss.xml", "BBC"),
-        ("https://techcrunch.com/feed/", "TechCrunch")
+        ("https://techcrunch.com/feed/", "TechCrunch"),
     ]
 
     items = []
 
     for url, source in feeds:
-        feed = feedparser.parse(url)
-        for e in feed.entries[:5]:
-            items.append({
-                "title": e.title,
-                "source": source
-            })
+        try:
+            feed = feedparser.parse(url)
+
+            for e in feed.entries[:5]:
+                if hasattr(e, "title"):
+                    items.append({
+                        "title": e.title,
+                        "source": source
+                    })
+        except:
+            continue
 
     return items
 
 
 # =========================
-# 2. CONTENT ENGINE
+# 4. CONTENT ENGINE（不变）
 # =========================
 
 def generate_content(title, source):
-    """
-    核心：爆款内容生成器
-    """
 
-    # 简单但有效的“爆点结构”
-    hook = f"🔥 {title}"
+    return f"""
+🔥 {title}
 
-    angle = f"""
 📌 来源：{source}
 
-📌 为什么这条重要：
-这类信息往往代表行业趋势 / 社会议题 / 技术变化。
+📌 爆点解读：
+这类信息通常代表趋势变化 / 行业信号 / 技术拐点
 
-📌 可传播角度：
-👉 普通人怎么看这件事？
-👉 对未来有什么影响？
+📌 内容角度：
+- 普通人怎么看？
+- 对未来有什么影响？
 
-📌 抖音标题建议：
+📌 抖音标题：
 {title[:30]}...
 
-📌 15秒口播脚本：
-这条新闻其实很关键……
+📌 15秒口播：
+这条信息其实很关键……
 很多人还没意识到它的影响……
 """
 
-    return hook + "\n" + angle
-
 
 # =========================
-# 3. BUILD REPORT
+# 5. REPORT
 # =========================
 
 def build_report(items):
     date = datetime.now().strftime("%Y-%m-%d")
 
-    text = f"🌍 GLOBAL VIRAL CONTENT ENGINE\n📅 {date}\n\n"
+    text = f"🌍 GLOBAL HOT REPORT (V11.1)\n📅 {date}\n\n"
+
+    if not items:
+        return text + "\n⚠️ 无数据（所有源失败，但系统已稳定运行）"
 
     for i, item in enumerate(items[:20], 1):
-        content = generate_content(item["title"], item["source"])
-
-        text += f"\n【{i}】\n{content}\n\n"
+        text += f"\n【{i}】{generate_content(item['title'], item['source'])}\n"
 
     return text
 
 
 # =========================
-# 4. SAVE
+# 6. SAVE
 # =========================
 
 def save_file(text):
-    name = f"viral_content_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    name = f"hot_report_{datetime.now().strftime('%Y-%m-%d')}.txt"
     with open(name, "w", encoding="utf-8") as f:
         f.write(text)
     return name
 
 
 # =========================
-# 5. TELEGRAM
+# 7. TELEGRAM
 # =========================
 
 def send_telegram(text):
@@ -149,13 +194,19 @@ def send_telegram(text):
 def main():
     items = []
 
+    print("[INFO] fetching hn...")
     items += fetch_hn()
+
+    print("[INFO] fetching reddit...")
     items += fetch_reddit()
+
+    print("[INFO] fetching rss...")
     items += fetch_rss()
 
-    # 去重（简单版）
+    # 去重
     seen = set()
     unique = []
+
     for i in items:
         if i["title"] not in seen:
             seen.add(i["title"])
@@ -166,7 +217,7 @@ def main():
     save_file(report)
     send_telegram(report)
 
-    print("V11 DONE")
+    print("DONE V11.1")
 
 
 if __name__ == "__main__":
