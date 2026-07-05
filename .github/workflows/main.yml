@@ -10,24 +10,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
-        run: pip install requests
+      - run: pip install requests
 
       - name: Run script
         run: python main.py
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
-      - name: Show generated files
-        run: ls -al
-
-      - name: Upload artifact
+      - name: Upload report
         uses: actions/upload-artifact@v4
         with:
           name: hot-report
