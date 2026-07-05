@@ -2,103 +2,44 @@ import requests
 import feedparser
 from datetime import datetime
 
-
 # =========================
-# SAFE REQUEST LAYER
-# =========================
-
-def safe_get_json(url, headers=None):
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-
-        if r.status_code != 200:
-            return None
-
-        if not r.text.strip():
-            return None
-
-        # 🚨 防止 HTML 被当 JSON
-        if "html" in r.text[:50].lower():
-            return None
-
-        return r.json()
-
-    except:
-        return None
-
-
-# =========================
-# REDDIT (ISOLATED)
-# =========================
-
-def fetch_reddit():
-    url = "https://www.reddit.com/r/worldnews/hot.json?limit=10"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-
-    data = safe_get_json(url, headers)
-
-    if not data:
-        return []
-
-    items = []
-
-    try:
-        for p in data["data"]["children"]:
-            d = p["data"]
-
-            items.append({
-                "title": d.get("title", ""),
-                "source": "Reddit",
-                "text": d.get("selftext", "")
-            })
-
-    except:
-        return []
-
-    return items
-
-
-# =========================
-# HACKER NEWS (ISOLATED)
+# DATA SOURCES
 # =========================
 
 def fetch_hn():
-    data = safe_get_json(
-        "https://hacker-news.firebaseio.com/v0/topstories.json"
-    )
+    try:
+        ids = requests.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json",
+            timeout=10
+        ).json()
 
-    if not data:
+        items = []
+
+        for i in ids[:20]:
+            item = requests.get(
+                f"https://hacker-news.firebaseio.com/v0/item/{i}.json",
+                timeout=10
+            ).json()
+
+            if item:
+                items.append({
+                    "title": item.get("title", ""),
+                    "text": item.get("text", ""),
+                    "source": "HackerNews"
+                })
+
+        return items
+
+    except:
         return []
 
-    items = []
-
-    for i in data[:10]:
-        item = safe_get_json(
-            f"https://hacker-news.firebaseio.com/v0/item/{i}.json"
-        )
-
-        if not item:
-            continue
-
-        items.append({
-            "title": item.get("title", ""),
-            "source": "HackerNews",
-            "text": item.get("text", "")
-        })
-
-    return items
-
-
-# =========================
-# RSS (ISOLATED)
-# =========================
 
 def fetch_rss():
+
     feeds = [
+        ("https://www.reuters.com/rssFeed/businessNews", "Reuters"),
         ("https://feeds.bbci.co.uk/news/rss.xml", "BBC"),
+        ("https://cointelegraph.com/rss", "CoinTelegraph"),
         ("https://techcrunch.com/feed/", "TechCrunch")
     ]
 
@@ -108,11 +49,11 @@ def fetch_rss():
         try:
             feed = feedparser.parse(url)
 
-            for e in feed.entries[:5]:
+            for e in feed.entries[:10]:
                 items.append({
                     "title": e.title,
-                    "source": source,
-                    "text": e.get("summary", "")
+                    "text": e.get("summary", ""),
+                    "source": source
                 })
 
         except:
@@ -122,105 +63,98 @@ def fetch_rss():
 
 
 # =========================
-# SAFETY FILTER (NO CRASH)
+# SIGNAL DETECTOR CORE
 # =========================
 
-def safe_collect():
-    items = []
-
-    try:
-        items += fetch_reddit()
-    except:
-        pass
-
-    try:
-        items += fetch_hn()
-    except:
-        pass
-
-    try:
-        items += fetch_rss()
-    except:
-        pass
-
-    return items
-
-
-# =========================
-# IMPACT FILTER (light version)
-# =========================
-
-def score(item):
+def detect_signal(item):
 
     t = (item.get("title") or "").lower()
+    text = (item.get("text") or "").lower()
 
-    s = 0
+    score = 0
+    tags = []
 
-    # 💰 money impact
-    if any(k in t for k in ["bitcoin", "btc", "stock", "market", "fed", "inflation"]):
-        s += 4
+    # 💰 money signal
+    if any(k in t for k in ["fed", "rate", "inflation", "btc", "bitcoin", "stock", "market"]):
+        score += 4
+        tags.append("MARKET_SIGNAL")
 
-    # 🧠 AI / tech
-    if any(k in t for k in ["ai", "openai", "google", "meta", "gpu", "chip"]):
-        s += 3
+    # 🧠 AI signal
+    if any(k in t for k in ["openai", "gpt", "google", "meta", "ai", "model"]):
+        score += 4
+        tags.append("AI_SIGNAL")
 
-    # 🌍 geopolitics
-    if any(k in t for k in ["war", "china", "us", "ukraine", "policy"]):
-        s += 2
+    # 🌍 macro signal
+    if any(k in t for k in ["war", "china", "us", "policy", "sec", "regulation"]):
+        score += 3
+        tags.append("MACRO_SIGNAL")
 
-    # noise filter
+    # 🚨 strong wording detection
+    if any(k in t for k in ["ban", "launch", "collapse", "crash", "breakthrough"]):
+        score += 2
+        tags.append("EVENT_SPIKE")
+
+    # 🧊 noise filter
     if any(k in t for k in ["sports", "celebrity", "movie"]):
-        s -= 5
+        score -= 5
+        tags.append("NOISE")
 
-    return s
+    return score, tags
 
 
-def filter_items(items):
+# =========================
+# FILTER SIGNALS
+# =========================
 
-    scored = []
+def filter_signals(items):
+
+    signals = []
 
     for i in items:
-        i["score"] = score(i)
-        if i["score"] >= 4:   # ⚠️ 降低门槛（保证不空）
-            scored.append(i)
+        score, tags = detect_signal(i)
 
-    return sorted(scored, key=lambda x: x["score"], reverse=True)
+        if score >= 5:
+            i["score"] = score
+            i["tags"] = tags
+            signals.append(i)
+
+    return sorted(signals, key=lambda x: x["score"], reverse=True)
 
 
 # =========================
-# REPORT BUILDER
+# OUTPUT
 # =========================
 
-def build(items):
+def build(signals):
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    if not items:
+    if not signals:
         return f"""
-🌍 STABLE INFO RADAR
+🌍 SIGNAL DETECTION v1
 📅 {date}
 
-⚠️ 当前没有高质量信息
-（数据源可能临时不可用）
+⚠️ No strong signals detected today
 """
 
     text = f"""
-🌍 STABLE INFO RADAR v1
+🚨 SIGNAL DETECTION v1
 📅 {date}
 
 ========================
 """
 
-    for i, item in enumerate(items[:20], 1):
+    for i, s in enumerate(signals, 1):
 
         text += f"""
 【{i}】
-📌 {item.get('title')}
-🏷 来源：{item.get('source')}
-⭐ Score：{item.get('score')}
+📌 {s['title']}
+🏷 {s['source']}
+⭐ Signal Score: {s['score']}
+🏷 Tags: {', '.join(s.get('tags', []))}
 
-🧠 内容：
-{(item.get('text') or '')[:300]}
+🧠 Context:
+{s.get('text','')[:400]}
 
 ------------------------
 """
@@ -234,18 +168,21 @@ def build(items):
 
 def main():
 
-    items = safe_collect()
+    items = []
 
-    filtered = filter_items(items)
+    items += fetch_hn()
+    items += fetch_rss()
 
-    report = build(filtered)
+    signals = filter_signals(items)
 
-    filename = f"stable_radar_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    report = build(signals)
+
+    filename = f"signal_report_{datetime.now().strftime('%Y-%m-%d')}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print("DONE STABLE SYSTEM:", filename)
+    print("DONE SIGNAL SYSTEM:", filename)
 
 
 if __name__ == "__main__":
