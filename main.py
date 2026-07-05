@@ -1,168 +1,103 @@
 import requests
 from datetime import datetime
 
-# =========================
-# 数据层
-# =========================
-def fetch_reddit():
-    url = "https://www.reddit.com/r/all/hot.json?limit=30"
-    headers = {"User-Agent": "Mozilla/5.0"}
+# ---------- 安全请求封装 ----------
+def safe_get_json(url, headers=None):
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
 
-    data = requests.get(url, headers=headers, timeout=10).json()
+        if r.status_code != 200:
+            return None
 
-    items = []
+        if not r.text or len(r.text.strip()) == 0:
+            return None
 
-    for p in data["data"]["children"]:
-        d = p["data"]
+        return r.json()
 
-        items.append({
-            "title": d["title"],
-            "score": d["score"],
-            "comments": d["num_comments"],
-            "url": "https://reddit.com" + d["permalink"],
-            "source": "Reddit"
-        })
-
-    return items
+    except Exception:
+        return None
 
 
+# ---------- HackerNews ----------
 def fetch_hn():
-    ids = requests.get(
-        "https://hacker-news.firebaseio.com/v0/topstories.json",
-        timeout=10
-    ).json()[:30]
+    url = "https://hacker-news.firebaseio.com/v0/topstories.json"
+    ids = safe_get_json(url)
+
+    if not ids:
+        return []
 
     items = []
-
-    for i in ids:
-        d = requests.get(
-            f"https://hacker-news.firebaseio.com/v0/item/{i}.json",
-            timeout=10
-        ).json()
-
-        if not d:
-            continue
-
-        items.append({
-            "title": d.get("title"),
-            "score": d.get("score", 0),
-            "comments": d.get("descendants", 0),
-            "url": d.get("url", ""),
-            "source": "HackerNews"
-        })
+    for i in ids[:10]:
+        item = safe_get_json(f"https://hacker-news.firebaseio.com/v0/item/{i}.json")
+        if item and "title" in item:
+            items.append({
+                "title": item["title"],
+                "source": "HackerNews"
+            })
 
     return items
 
 
-# =========================
-# 爆款评分
-# =========================
-def score(item):
-    text = item["title"].lower()
+# ---------- Reddit（稳定UA） ----------
+def fetch_reddit():
+    url = "https://www.reddit.com/r/worldnews/top.json?limit=10"
 
-    s = 0
-
-    if item["score"] > 300:
-        s += 2
-
-    if item["comments"] > 50:
-        s += 2
-
-    if any(k in text for k in ["ai", "gpt", "openai"]):
-        s += 3
-
-    if any(k in text for k in ["leak", "hack", "war", "crash"]):
-        s += 3
-
-    return s
-
-
-# =========================
-# 内容生成（可发布）
-# =========================
-def make_content(item):
-
-    title = item["title"]
-
-    # 抖音脚本
-    douyin = f"""
-🎬 标题：{title}
-
-🧠 开头3秒：
-“你可能没注意，这件事正在发生变化…”
-
-💥 内容：
-这条新闻来自 {item['source']}，目前在全球技术社区引发讨论。
-
-⚡ 核心点：
-可能影响整个行业的发展方向。
-
-📢 结尾：
-你怎么看这件事？
-"""
-
-    # 小红书
-    xhs = f"""
-标题：{title}正在引发全球讨论
-
-👉 发生了什么
-全球社区正在关注这个事件
-
-👉 为什么重要
-可能影响未来技术和行业趋势
-
-👉 个人看法
-这是一个值得持续关注的变化
-"""
-
-    return {
-        "title": title,
-        "douyin": douyin,
-        "xhs": xhs,
-        "score": item["score"],
-        "comments": item["comments"],
-        "source": item["source"]
+    headers = {
+        "User-Agent": "Mozilla/5.0"
     }
 
+    data = safe_get_json(url, headers=headers)
 
-# =========================
-# 主程序
-# =========================
+    if not data:
+        return []
+
+    items = []
+    try:
+        children = data["data"]["children"]
+        for c in children:
+            t = c["data"].get("title")
+            if t:
+                items.append({
+                    "title": t,
+                    "source": "Reddit"
+                })
+    except:
+        pass
+
+    return items
+
+
+# ---------- 生成报告 ----------
+def generate_report(items):
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    lines = []
+    lines.append("🔥 GLOBAL HOT DAILY REPORT (V9 STABLE)")
+    lines.append(today)
+    lines.append("")
+
+    if not items:
+        lines.append("⚠️ No data available (all sources failed, fallback mode)")
+        lines.append("System is running in safe mode.")
+    else:
+        for i, item in enumerate(items[:30], 1):
+            lines.append(f"{i}. {item['title']}")
+            lines.append(f"来源: {item['source']}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------- 主函数 ----------
 def main():
-
     items = fetch_reddit() + fetch_hn()
 
-    # 排序 + 过滤爆点
-    items = sorted(items, key=score, reverse=True)
+    report = generate_report(items)
 
-    top = items[:5]   # 🔥 只取爆款
-
-    contents = [make_content(i) for i in top]
-
-    date = datetime.now().strftime("%Y-%m-%d")
-
-    out = []
-
-    out.append("🚀 CONTENT PACK（可发布版本）")
-    out.append(f"📅 {date}\n")
-
-    for i, c in enumerate(contents, 1):
-
-        out.append(f"🔥 {i}. {c['title']}")
-        out.append("")
-
-        out.append("🎬 抖音脚本：")
-        out.append(c["douyin"])
-
-        out.append("📱 小红书：")
-        out.append(c["xhs"])
-
-        out.append("────────────────────\n")
-
-    filename = f"content_pack_{date}.txt"
+    filename = f"global_hot_{datetime.now().strftime('%Y-%m-%d')}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
-        f.write("\n".join(out))
+        f.write(report)
 
     print("DONE:", filename)
 
