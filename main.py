@@ -1,49 +1,100 @@
-import os
 import requests
 import feedparser
 from datetime import datetime
 
+
 # =========================
-# DATA SOURCES
+# SAFE REQUEST LAYER
+# =========================
+
+def safe_get_json(url, headers=None):
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+
+        if r.status_code != 200:
+            return None
+
+        if not r.text.strip():
+            return None
+
+        # 🚨 防止 HTML 被当 JSON
+        if "html" in r.text[:50].lower():
+            return None
+
+        return r.json()
+
+    except:
+        return None
+
+
+# =========================
+# REDDIT (ISOLATED)
 # =========================
 
 def fetch_reddit():
-    url = "https://www.reddit.com/r/worldnews/hot.json?limit=15"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    url = "https://www.reddit.com/r/worldnews/hot.json?limit=10"
 
-    r = requests.get(url, headers=headers, timeout=10).json()
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    data = safe_get_json(url, headers)
+
+    if not data:
+        return []
 
     items = []
-    for p in r["data"]["children"]:
-        d = p["data"]
+
+    try:
+        for p in data["data"]["children"]:
+            d = p["data"]
+
+            items.append({
+                "title": d.get("title", ""),
+                "source": "Reddit",
+                "text": d.get("selftext", "")
+            })
+
+    except:
+        return []
+
+    return items
+
+
+# =========================
+# HACKER NEWS (ISOLATED)
+# =========================
+
+def fetch_hn():
+    data = safe_get_json(
+        "https://hacker-news.firebaseio.com/v0/topstories.json"
+    )
+
+    if not data:
+        return []
+
+    items = []
+
+    for i in data[:10]:
+        item = safe_get_json(
+            f"https://hacker-news.firebaseio.com/v0/item/{i}.json"
+        )
+
+        if not item:
+            continue
+
         items.append({
-            "title": d["title"],
-            "source": "Reddit",
-            "text": d.get("selftext", "")
+            "title": item.get("title", ""),
+            "source": "HackerNews",
+            "text": item.get("text", "")
         })
 
     return items
 
 
-def fetch_hn():
-    ids = requests.get("https://hacker-news.firebaseio.com/v0/topstories.json").json()
-
-    items = []
-
-    for i in ids[:15]:
-        item = requests.get(
-            f"https://hacker-news.firebaseio.com/v0/item/{i}.json"
-        ).json()
-
-        if item:
-            items.append({
-                "title": item.get("title", ""),
-                "source": "HackerNews",
-                "text": item.get("text", "")
-            })
-
-    return items
-
+# =========================
+# RSS (ISOLATED)
+# =========================
 
 def fetch_rss():
     feeds = [
@@ -54,91 +105,122 @@ def fetch_rss():
     items = []
 
     for url, source in feeds:
-        feed = feedparser.parse(url)
+        try:
+            feed = feedparser.parse(url)
 
-        for e in feed.entries[:10]:
-            items.append({
-                "title": e.title,
-                "source": source,
-                "text": e.get("summary", "")
-            })
+            for e in feed.entries[:5]:
+                items.append({
+                    "title": e.title,
+                    "source": source,
+                    "text": e.get("summary", "")
+                })
+
+        except:
+            continue
 
     return items
 
 
 # =========================
-# IMPACT SCORE ENGINE
+# SAFETY FILTER (NO CRASH)
+# =========================
+
+def safe_collect():
+    items = []
+
+    try:
+        items += fetch_reddit()
+    except:
+        pass
+
+    try:
+        items += fetch_hn()
+    except:
+        pass
+
+    try:
+        items += fetch_rss()
+    except:
+        pass
+
+    return items
+
+
+# =========================
+# IMPACT FILTER (light version)
 # =========================
 
 def score(item):
-    t = item["title"].lower()
-    text = (item.get("text") or "").lower()
+
+    t = (item.get("title") or "").lower()
 
     s = 0
 
-    # 💰 钱相关
+    # 💰 money impact
     if any(k in t for k in ["bitcoin", "btc", "stock", "market", "fed", "inflation"]):
         s += 4
 
-    # 🧠 AI / Tech
+    # 🧠 AI / tech
     if any(k in t for k in ["ai", "openai", "google", "meta", "gpu", "chip"]):
         s += 3
 
     # 🌍 geopolitics
-    if any(k in t for k in ["war", "china", "us", "ukraine", "policy", "government"]):
+    if any(k in t for k in ["war", "china", "us", "ukraine", "policy"]):
         s += 2
 
-    # 🧊 noise penalty
-    if any(k in t for k in ["celebrity", "movie", "sports", "game"]):
+    # noise filter
+    if any(k in t for k in ["sports", "celebrity", "movie"]):
         s -= 5
-
-    # 有正文加分
-    if len(text) > 200:
-        s += 1
 
     return s
 
 
-# =========================
-# FILTER
-# =========================
-
 def filter_items(items):
+
     scored = []
 
     for i in items:
         i["score"] = score(i)
-        if i["score"] >= 6:
+        if i["score"] >= 4:   # ⚠️ 降低门槛（保证不空）
             scored.append(i)
 
     return sorted(scored, key=lambda x: x["score"], reverse=True)
 
 
 # =========================
-# OUTPUT
+# REPORT BUILDER
 # =========================
 
 def build(items):
 
     date = datetime.now().strftime("%Y-%m-%d")
 
+    if not items:
+        return f"""
+🌍 STABLE INFO RADAR
+📅 {date}
+
+⚠️ 当前没有高质量信息
+（数据源可能临时不可用）
+"""
+
     text = f"""
-🌍 IMPACT NEWS RADAR
+🌍 STABLE INFO RADAR v1
 📅 {date}
 
 ========================
 """
 
-    for i, item in enumerate(items, 1):
+    for i, item in enumerate(items[:20], 1):
 
         text += f"""
 【{i}】
-📌 {item['title']}
-🏷 来源：{item['source']}
-⭐ Impact Score：{item['score']}
+📌 {item.get('title')}
+🏷 来源：{item.get('source')}
+⭐ Score：{item.get('score')}
 
-🧠 简要说明：
-{item.get('text','')[:300]}
+🧠 内容：
+{(item.get('text') or '')[:300]}
 
 ------------------------
 """
@@ -152,22 +234,18 @@ def build(items):
 
 def main():
 
-    items = []
-
-    items += fetch_reddit()
-    items += fetch_hn()
-    items += fetch_rss()
+    items = safe_collect()
 
     filtered = filter_items(items)
 
     report = build(filtered)
 
-    filename = f"impact_news_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    filename = f"stable_radar_{datetime.now().strftime('%Y-%m-%d')}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print("DONE IMPACT SYSTEM:", filename)
+    print("DONE STABLE SYSTEM:", filename)
 
 
 if __name__ == "__main__":
