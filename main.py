@@ -1,181 +1,182 @@
-import os
 import requests
-from bs4 import BeautifulSoup
+import feedparser
 from datetime import datetime
-
-TG_TOKEN = os.getenv("TG_TOKEN")
-TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
 
 # =========================
 # SAFE REQUEST
 # =========================
 
-def get(url, headers=None):
+def get_json(url, headers=None):
     try:
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code != 200:
             return None
         if not r.text.strip():
             return None
-        return r
+        return r.json()
     except:
         return None
 
 
 # =========================
-# EXTRACT WEB CONTENT (核心新增)
-# =========================
-
-def extract_text(url):
-    r = get(url, headers={"User-Agent": "Mozilla/5.0"})
-    if not r:
-        return ""
-
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    # 删除无用标签
-    for tag in soup(["script", "style", "noscript"]):
-        tag.extract()
-
-    text = soup.get_text(separator="\n")
-
-    # 简单清洗
-    lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 30]
-
-    return "\n".join(lines[:30])
-
-
-# =========================
-# REDDIT (完整实体版)
+# REDDIT (PRIMARY SOURCE)
 # =========================
 
 def fetch_reddit():
     url = "https://www.reddit.com/r/worldnews/hot.json?limit=10"
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    r = get(url, headers)
-    if not r:
+    data = get_json(url, headers)
+    if not data:
         return []
-
-    data = r.json()
-    results = []
-
-    for post in data["data"]["children"][:10]:
-        d = post["data"]
-
-        link = "https://www.reddit.com" + d["permalink"]
-
-        # comments
-        comments = []
-        try:
-            c = get(link + ".json", headers)
-            if c:
-                cj = c.json()
-                if len(cj) > 1:
-                    for item in cj[1]["data"]["children"][:5]:
-                        body = item["data"].get("body")
-                        if body:
-                            comments.append(body)
-        except:
-            pass
-
-        full_text = d.get("selftext", "")
-
-        results.append({
-            "title": d.get("title", ""),
-            "url": link,
-            "source": "Reddit",
-            "full_text": full_text,
-            "top_comments": comments
-        })
-
-    return results
-
-
-# =========================
-# HACKER NEWS (实体增强)
-# =========================
-
-def fetch_hn():
-    ids = get("https://hacker-news.firebaseio.com/v0/topstories.json")
-    if not ids:
-        return []
-
-    ids = ids.json()
 
     items = []
 
-    for i in ids[:10]:
-        item = get(f"https://hacker-news.firebaseio.com/v0/item/{i}.json")
-        if not item:
-            continue
-
-        j = item.json()
-
-        url = j.get("url", "")
-        text = j.get("text", "")
-
-        # 如果有外链 → 抓正文
-        if url:
-            text = extract_text(url)
+    for post in data["data"]["children"]:
+        d = post["data"]
 
         items.append({
-            "title": j.get("title", ""),
-            "url": url,
-            "source": "HackerNews",
-            "full_text": text,
-            "top_comments": []
+            "title": d.get("title"),
+            "source": "Reddit",
+            "url": "https://reddit.com" + d.get("permalink"),
+            "text": d.get("selftext", ""),
+            "score": d.get("ups", 0)
         })
 
     return items
 
 
 # =========================
-# SCORE SYSTEM（爆点评分）
+# HACKER NEWS (PRIMARY SOURCE)
 # =========================
 
-def score(item):
-    s = 0
-    if item["full_text"]:
-        s += 2
-    if len(item["top_comments"]) > 2:
-        s += 2
-    if "AI" in item["title"] or "Google" in item["title"]:
-        s += 1
-    return s
+def fetch_hn():
+    ids = get_json("https://hacker-news.firebaseio.com/v0/topstories.json")
+    if not ids:
+        return []
+
+    items = []
+
+    for i in ids[:10]:
+        item = get_json(
+            f"https://hacker-news.firebaseio.com/v0/item/{i}.json"
+        )
+
+        if not item:
+            continue
+
+        items.append({
+            "title": item.get("title"),
+            "source": "HackerNews",
+            "url": item.get("url"),
+            "text": item.get("text", ""),
+            "score": item.get("score", 0)
+        })
+
+    return items
 
 
 # =========================
-# CONTENT ENGINE（关键升级）
+# STOCKS (Yahoo Finance Lite)
 # =========================
 
-def build(item):
+def fetch_market():
+    url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=SPY,BTC-USD,QQQ"
+    data = get_json(url)
 
-    comments = "\n".join(item["top_comments"][:5]) or "无评论"
+    items = []
 
-    summary = item["full_text"][:200] if item["full_text"] else "无正文（仅标题）"
+    if data and "quoteResponse" in data:
+        for q in data["quoteResponse"]["result"]:
+            items.append({
+                "title": f"{q.get('symbol')} price update",
+                "source": "Market",
+                "url": "",
+                "text": f"Price: {q.get('regularMarketPrice')}",
+                "score": q.get("regularMarketChangePercent", 0)
+            })
 
-    return f"""
-🔥 标题：{item['title']}
-📌 来源：{item['source']}
-🔗 原文：{item['url']}
+    return items
 
-🧠 正文摘要：
-{summary}
 
-💬 Top评论：
-{comments}
+# =========================
+# RSS NEWS (PRIMARY GLOBAL NEWS)
+# =========================
 
-🎯 抖音脚本：
-这条海外信息最近在讨论……
-核心点其实是……
+def fetch_rss():
+    feeds = [
+        ("https://feeds.bbci.co.uk/news/rss.xml", "BBC"),
+        ("https://www.reutersagency.com/feed/?best-topics=business-finance", "Reuters")
+    ]
 
-⚡ 爆点：
-- 信息密度：高
-- 讨论度：中高
-- 可传播性：高
+    items = []
+
+    for url, source in feeds:
+        feed = feedparser.parse(url)
+
+        for e in feed.entries[:5]:
+            items.append({
+                "title": e.title,
+                "source": source,
+                "url": e.link,
+                "text": e.get("summary", ""),
+                "score": 1
+            })
+
+    return items
+
+
+# =========================
+# CLASSIFY
+# =========================
+
+def classify(item):
+    t = item["title"].lower()
+
+    if any(k in t for k in ["bitcoin", "btc", "crypto"]):
+        return "Crypto"
+
+    if any(k in t for k in ["stock", "market", "spy", "qqq"]):
+        return "Stocks"
+
+    if any(k in t for k in ["ai", "openai", "google", "meta"]):
+        return "AI"
+
+    return "Tech"
+
+
+# =========================
+# REPORT
+# =========================
+
+def build(items):
+
+    date = datetime.now().strftime("%Y-%m-%d")
+
+    report = f"""
+🌍 GLOBAL INFO RADAR v1
+📅 {date}
+
+========================
 """
+
+    for i, item in enumerate(items, 1):
+
+        report += f"""
+【{i}】
+📌 {item['title']}
+🏷 分类：{classify(item)}
+📡 来源：{item['source']}
+🔗 链接：{item['url']}
+
+🧠 原文信息：
+{item['text'][:300] if item['text'] else '无正文'}
+
+------------------------
+"""
+
+    return report
 
 
 # =========================
@@ -185,25 +186,23 @@ def build(item):
 def main():
 
     items = []
+
     items += fetch_reddit()
     items += fetch_hn()
+    items += fetch_rss()
+    items += fetch_market()
 
-    # 排序（关键）
-    items = sorted(items, key=score, reverse=True)
+    # 去空
+    items = [i for i in items if i.get("title")]
 
-    date = datetime.now().strftime("%Y-%m-%d")
+    report = build(items)
 
-    report = f"🌍 GLOBAL CONTENT ENGINE V12.6\n📅 {date}\n\n"
-
-    for i, item in enumerate(items[:15], 1):
-        report += f"\n【{i}】\n{build(item)}\n"
-
-    filename = f"hot_report_{date}.txt"
+    filename = f"info_radar_{datetime.now().strftime('%Y-%m-%d')}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print("DONE V12.6:", filename)
+    print("DONE:", filename)
 
 
 if __name__ == "__main__":
