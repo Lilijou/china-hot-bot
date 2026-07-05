@@ -1,113 +1,54 @@
+import os
 import requests
 import feedparser
 from datetime import datetime
 
-
 # =========================
-# SAFE REQUEST
-# =========================
-
-def get_json(url, headers=None):
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code != 200:
-            return None
-        if not r.text.strip():
-            return None
-        return r.json()
-    except:
-        return None
-
-
-# =========================
-# REDDIT (PRIMARY SOURCE)
+# DATA SOURCES
 # =========================
 
 def fetch_reddit():
-    url = "https://www.reddit.com/r/worldnews/hot.json?limit=10"
+    url = "https://www.reddit.com/r/worldnews/hot.json?limit=15"
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    data = get_json(url, headers)
-    if not data:
-        return []
+    r = requests.get(url, headers=headers, timeout=10).json()
 
     items = []
-
-    for post in data["data"]["children"]:
-        d = post["data"]
-
+    for p in r["data"]["children"]:
+        d = p["data"]
         items.append({
-            "title": d.get("title"),
+            "title": d["title"],
             "source": "Reddit",
-            "url": "https://reddit.com" + d.get("permalink"),
-            "text": d.get("selftext", ""),
-            "score": d.get("ups", 0)
+            "text": d.get("selftext", "")
         })
 
     return items
 
-
-# =========================
-# HACKER NEWS (PRIMARY SOURCE)
-# =========================
 
 def fetch_hn():
-    ids = get_json("https://hacker-news.firebaseio.com/v0/topstories.json")
-    if not ids:
-        return []
+    ids = requests.get("https://hacker-news.firebaseio.com/v0/topstories.json").json()
 
     items = []
 
-    for i in ids[:10]:
-        item = get_json(
+    for i in ids[:15]:
+        item = requests.get(
             f"https://hacker-news.firebaseio.com/v0/item/{i}.json"
-        )
+        ).json()
 
-        if not item:
-            continue
-
-        items.append({
-            "title": item.get("title"),
-            "source": "HackerNews",
-            "url": item.get("url"),
-            "text": item.get("text", ""),
-            "score": item.get("score", 0)
-        })
-
-    return items
-
-
-# =========================
-# STOCKS (Yahoo Finance Lite)
-# =========================
-
-def fetch_market():
-    url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=SPY,BTC-USD,QQQ"
-    data = get_json(url)
-
-    items = []
-
-    if data and "quoteResponse" in data:
-        for q in data["quoteResponse"]["result"]:
+        if item:
             items.append({
-                "title": f"{q.get('symbol')} price update",
-                "source": "Market",
-                "url": "",
-                "text": f"Price: {q.get('regularMarketPrice')}",
-                "score": q.get("regularMarketChangePercent", 0)
+                "title": item.get("title", ""),
+                "source": "HackerNews",
+                "text": item.get("text", "")
             })
 
     return items
 
 
-# =========================
-# RSS NEWS (PRIMARY GLOBAL NEWS)
-# =========================
-
 def fetch_rss():
     feeds = [
         ("https://feeds.bbci.co.uk/news/rss.xml", "BBC"),
-        ("https://www.reutersagency.com/feed/?best-topics=business-finance", "Reuters")
+        ("https://techcrunch.com/feed/", "TechCrunch")
     ]
 
     items = []
@@ -115,47 +56,74 @@ def fetch_rss():
     for url, source in feeds:
         feed = feedparser.parse(url)
 
-        for e in feed.entries[:5]:
+        for e in feed.entries[:10]:
             items.append({
                 "title": e.title,
                 "source": source,
-                "url": e.link,
-                "text": e.get("summary", ""),
-                "score": 1
+                "text": e.get("summary", "")
             })
 
     return items
 
 
 # =========================
-# CLASSIFY
+# IMPACT SCORE ENGINE
 # =========================
 
-def classify(item):
+def score(item):
     t = item["title"].lower()
+    text = (item.get("text") or "").lower()
 
-    if any(k in t for k in ["bitcoin", "btc", "crypto"]):
-        return "Crypto"
+    s = 0
 
-    if any(k in t for k in ["stock", "market", "spy", "qqq"]):
-        return "Stocks"
+    # 💰 钱相关
+    if any(k in t for k in ["bitcoin", "btc", "stock", "market", "fed", "inflation"]):
+        s += 4
 
-    if any(k in t for k in ["ai", "openai", "google", "meta"]):
-        return "AI"
+    # 🧠 AI / Tech
+    if any(k in t for k in ["ai", "openai", "google", "meta", "gpu", "chip"]):
+        s += 3
 
-    return "Tech"
+    # 🌍 geopolitics
+    if any(k in t for k in ["war", "china", "us", "ukraine", "policy", "government"]):
+        s += 2
+
+    # 🧊 noise penalty
+    if any(k in t for k in ["celebrity", "movie", "sports", "game"]):
+        s -= 5
+
+    # 有正文加分
+    if len(text) > 200:
+        s += 1
+
+    return s
 
 
 # =========================
-# REPORT
+# FILTER
+# =========================
+
+def filter_items(items):
+    scored = []
+
+    for i in items:
+        i["score"] = score(i)
+        if i["score"] >= 6:
+            scored.append(i)
+
+    return sorted(scored, key=lambda x: x["score"], reverse=True)
+
+
+# =========================
+# OUTPUT
 # =========================
 
 def build(items):
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    report = f"""
-🌍 GLOBAL INFO RADAR v1
+    text = f"""
+🌍 IMPACT NEWS RADAR
 📅 {date}
 
 ========================
@@ -163,20 +131,19 @@ def build(items):
 
     for i, item in enumerate(items, 1):
 
-        report += f"""
+        text += f"""
 【{i}】
 📌 {item['title']}
-🏷 分类：{classify(item)}
-📡 来源：{item['source']}
-🔗 链接：{item['url']}
+🏷 来源：{item['source']}
+⭐ Impact Score：{item['score']}
 
-🧠 原文信息：
-{item['text'][:300] if item['text'] else '无正文'}
+🧠 简要说明：
+{item.get('text','')[:300]}
 
 ------------------------
 """
 
-    return report
+    return text
 
 
 # =========================
@@ -190,19 +157,17 @@ def main():
     items += fetch_reddit()
     items += fetch_hn()
     items += fetch_rss()
-    items += fetch_market()
 
-    # 去空
-    items = [i for i in items if i.get("title")]
+    filtered = filter_items(items)
 
-    report = build(items)
+    report = build(filtered)
 
-    filename = f"info_radar_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    filename = f"impact_news_{datetime.now().strftime('%Y-%m-%d')}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print("DONE:", filename)
+    print("DONE IMPACT SYSTEM:", filename)
 
 
 if __name__ == "__main__":
