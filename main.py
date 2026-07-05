@@ -24,15 +24,14 @@ def fetch_hackernews():
 
             score = item.get("score", 0)
 
-            # 热点过滤
-            if score < 60:
+            # 🔥 过滤冷内容（V7升级重点）
+            if score < 80:
                 continue
 
             results.append({
                 "title": item.get("title", ""),
                 "score": score,
                 "comments": item.get("descendants", 0),
-                "url": item.get("url", ""),
                 "source": "HackerNews"
             })
 
@@ -59,14 +58,13 @@ def fetch_reddit():
             score = d.get("score", 0)
             comments = d.get("num_comments", 0)
 
-            if score < 200 and comments < 20:
+            if score < 300 and comments < 30:
                 continue
 
             results.append({
                 "title": d.get("title", ""),
                 "score": score,
                 "comments": comments,
-                "url": "https://reddit.com" + d.get("permalink", ""),
                 "source": "Reddit"
             })
 
@@ -76,42 +74,64 @@ def fetch_reddit():
 
 
 # =========================
-# 🔥 V6核心：热点理解层
+# 🔥 V7核心：内容生成器
 # =========================
-def analyze_item(item):
-    title = item["title"].lower()
+def generate_content(item):
+    title = item["title"]
 
-    # 分类系统
-    if any(k in title for k in ["ai", "gpt", "openai", "model", "claude"]):
-        category = "🔥 AI / 大模型"
-    elif any(k in title for k in ["google", "apple", "microsoft", "meta"]):
-        category = "📈 大厂动态"
-    elif any(k in title for k in ["security", "leak", "hack", "vulnerability"]):
-        category = "⚠️ 安全/漏洞"
+    # 分类（升级版）
+    if any(k in title.lower() for k in ["ai", "gpt", "openai", "model"]):
+        t = "🔥 AI爆点"
+    elif any(k in title.lower() for k in ["google", "apple", "microsoft"]):
+        t = "📈 大厂动态"
     elif item["score"] > 1000:
-        category = "🔥 爆点热点"
+        t = "🔥 全球爆点"
     else:
-        category = "🧠 技术趋势"
+        t = "🧠 技术趋势"
 
-    # 人话解释（关键升级）
-    explanation = generate_explanation(item["title"])
+    # 🧠 发生了什么（结构化解释）
+    happened = f"社区正在讨论：{title}"
 
-    item["category"] = category
-    item["explanation"] = explanation
+    # 💥 为什么火（核心升级）
+    why_hot = generate_why_hot(title)
 
-    return item
+    # ⚡ 争议点
+    debate = generate_debate(title)
+
+    # 📢 可传播角度
+    angle = generate_angle(title)
+
+    return {
+        "title": title,
+        "type": t,
+        "happened": happened,
+        "why": why_hot,
+        "debate": debate,
+        "angle": angle,
+        "score": item["score"],
+        "comments": item["comments"],
+        "source": item["source"]
+    }
 
 
-def generate_explanation(title):
-    # 简化版“热点理解层”（V6核心）
-    if "AI" in title or "GPT" in title:
-        return "这个话题涉及AI技术进展或模型能力变化，容易引发开发者和行业讨论。"
-    elif "Google" in title or "Apple" in title:
-        return "大厂动态，通常意味着产品或战略变化，会影响行业方向。"
-    elif "leak" in title or "hack" in title:
-        return "涉及安全或数据泄露，容易引发争议和关注。"
-    else:
-        return "这是当前技术社区或互联网用户正在讨论的热门内容。"
+def generate_why_hot(title):
+    t = title.lower()
+
+    if "ai" in t or "gpt" in t:
+        return "AI能力变化引发开发者与行业关注"
+    if "hack" in t or "leak" in t:
+        return "涉及安全或隐私问题，容易引发传播"
+    if "google" in t or "apple" in t:
+        return "大厂动作影响行业预期"
+    return "该话题在技术社区或社交平台出现集中讨论"
+
+
+def generate_debate(title):
+    return "真实性 / 影响范围 / 技术可行性存在讨论空间"
+
+
+def generate_angle(title):
+    return "可以从普通人影响 + 行业变化角度进行内容化表达"
 
 
 # =========================
@@ -126,42 +146,47 @@ def rank(items):
 
 
 # =========================
-# 主程序（V6）
+# 主程序（V7）
 # =========================
 def main():
-    print("START V6 HOT INTELLIGENCE BOT")
+
+    print("START V7 CONTENT ENGINE")
 
     items = []
     items += fetch_hackernews()
     items += fetch_reddit()
 
-    # 🔥 加理解层
-    items = [analyze_item(i) for i in items]
+    # 👉 内容生成层（核心升级）
+    items = [generate_content(i) for i in items]
 
     # 排序
     items = rank(items)
 
-    # 控制 30 条以内
+    # 控制数量
     items = items[:30]
 
-    if not items:
-        content = "⚠️ 无热点数据"
-    else:
-        content = "🌍 GLOBAL HOT REPORT V6（热点理解版）\n"
-        content += f"📅 {datetime.now().strftime('%Y-%m-%d')}\n\n"
+    date = datetime.now().strftime("%Y-%m-%d")
 
-        for i, item in enumerate(items, 1):
-            content += f"{i}. {item['title']}\n"
-            content += f"   {item['category']}\n"
-            content += f"   🔥 热度: {item['score']} | 💬 {item['comments']}\n"
-            content += f"   🧠 解读: {item['explanation']}\n"
-            content += f"   🌐 {item['source']}\n"
-            content += f"   🔗 {item['url']}\n\n"
+    content = []
+    content.append("🌍 GLOBAL HOT REPORT V7（内容生成版）")
+    content.append(f"📅 {date}")
+    content.append("")
 
-    filename = f"global_hot_v6_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    for i, item in enumerate(items, 1):
+        content.append(f"{i}. {item['title']}")
+        content.append(f"   {item['type']}")
+        content.append(f"   🧠 发生：{item['happened']}")
+        content.append(f"   💥 为什么火：{item['why']}")
+        content.append(f"   ⚡ 争议点：{item['debate']}")
+        content.append(f"   📢 可传播角度：{item['angle']}")
+        content.append(f"   🔥 热度: {item['score']} | 💬 {item['comments']}")
+        content.append(f"   🌐 来源: {item['source']}")
+        content.append("")
+
+    filename = f"global_hot_v7_{date}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write("\n".join(content))
 
     print("DONE:", filename)
 
