@@ -2,191 +2,167 @@ import requests
 from datetime import datetime
 
 # =========================
-# HackerNews
-# =========================
-def fetch_hackernews():
-    try:
-        ids = requests.get(
-            "https://hacker-news.firebaseio.com/v0/topstories.json",
-            timeout=10
-        ).json()[:40]
-
-        results = []
-
-        for i in ids:
-            item = requests.get(
-                f"https://hacker-news.firebaseio.com/v0/item/{i}.json",
-                timeout=10
-            ).json()
-
-            if not item:
-                continue
-
-            score = item.get("score", 0)
-
-            # 🔥 过滤冷内容（V7升级重点）
-            if score < 80:
-                continue
-
-            results.append({
-                "title": item.get("title", ""),
-                "score": score,
-                "comments": item.get("descendants", 0),
-                "source": "HackerNews"
-            })
-
-        return results
-    except:
-        return []
-
-
-# =========================
-# Reddit
+# 数据层
 # =========================
 def fetch_reddit():
-    try:
-        url = "https://www.reddit.com/r/all/hot.json?limit=50"
-        headers = {"User-Agent": "Mozilla/5.0"}
+    url = "https://www.reddit.com/r/all/hot.json?limit=30"
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-        data = requests.get(url, headers=headers, timeout=10).json()
+    data = requests.get(url, headers=headers, timeout=10).json()
 
-        results = []
+    items = []
 
-        for post in data["data"]["children"]:
-            d = post["data"]
+    for p in data["data"]["children"]:
+        d = p["data"]
 
-            score = d.get("score", 0)
-            comments = d.get("num_comments", 0)
+        items.append({
+            "title": d["title"],
+            "score": d["score"],
+            "comments": d["num_comments"],
+            "url": "https://reddit.com" + d["permalink"],
+            "source": "Reddit"
+        })
 
-            if score < 300 and comments < 30:
-                continue
+    return items
 
-            results.append({
-                "title": d.get("title", ""),
-                "score": score,
-                "comments": comments,
-                "source": "Reddit"
-            })
 
-        return results
-    except:
-        return []
+def fetch_hn():
+    ids = requests.get(
+        "https://hacker-news.firebaseio.com/v0/topstories.json",
+        timeout=10
+    ).json()[:30]
+
+    items = []
+
+    for i in ids:
+        d = requests.get(
+            f"https://hacker-news.firebaseio.com/v0/item/{i}.json",
+            timeout=10
+        ).json()
+
+        if not d:
+            continue
+
+        items.append({
+            "title": d.get("title"),
+            "score": d.get("score", 0),
+            "comments": d.get("descendants", 0),
+            "url": d.get("url", ""),
+            "source": "HackerNews"
+        })
+
+    return items
 
 
 # =========================
-# 🔥 V7核心：内容生成器
+# 爆款评分
 # =========================
-def generate_content(item):
+def score(item):
+    text = item["title"].lower()
+
+    s = 0
+
+    if item["score"] > 300:
+        s += 2
+
+    if item["comments"] > 50:
+        s += 2
+
+    if any(k in text for k in ["ai", "gpt", "openai"]):
+        s += 3
+
+    if any(k in text for k in ["leak", "hack", "war", "crash"]):
+        s += 3
+
+    return s
+
+
+# =========================
+# 内容生成（可发布）
+# =========================
+def make_content(item):
+
     title = item["title"]
 
-    # 分类（升级版）
-    if any(k in title.lower() for k in ["ai", "gpt", "openai", "model"]):
-        t = "🔥 AI爆点"
-    elif any(k in title.lower() for k in ["google", "apple", "microsoft"]):
-        t = "📈 大厂动态"
-    elif item["score"] > 1000:
-        t = "🔥 全球爆点"
-    else:
-        t = "🧠 技术趋势"
+    # 抖音脚本
+    douyin = f"""
+🎬 标题：{title}
 
-    # 🧠 发生了什么（结构化解释）
-    happened = f"社区正在讨论：{title}"
+🧠 开头3秒：
+“你可能没注意，这件事正在发生变化…”
 
-    # 💥 为什么火（核心升级）
-    why_hot = generate_why_hot(title)
+💥 内容：
+这条新闻来自 {item['source']}，目前在全球技术社区引发讨论。
 
-    # ⚡ 争议点
-    debate = generate_debate(title)
+⚡ 核心点：
+可能影响整个行业的发展方向。
 
-    # 📢 可传播角度
-    angle = generate_angle(title)
+📢 结尾：
+你怎么看这件事？
+"""
+
+    # 小红书
+    xhs = f"""
+标题：{title}正在引发全球讨论
+
+👉 发生了什么
+全球社区正在关注这个事件
+
+👉 为什么重要
+可能影响未来技术和行业趋势
+
+👉 个人看法
+这是一个值得持续关注的变化
+"""
 
     return {
         "title": title,
-        "type": t,
-        "happened": happened,
-        "why": why_hot,
-        "debate": debate,
-        "angle": angle,
+        "douyin": douyin,
+        "xhs": xhs,
         "score": item["score"],
         "comments": item["comments"],
         "source": item["source"]
     }
 
 
-def generate_why_hot(title):
-    t = title.lower()
-
-    if "ai" in t or "gpt" in t:
-        return "AI能力变化引发开发者与行业关注"
-    if "hack" in t or "leak" in t:
-        return "涉及安全或隐私问题，容易引发传播"
-    if "google" in t or "apple" in t:
-        return "大厂动作影响行业预期"
-    return "该话题在技术社区或社交平台出现集中讨论"
-
-
-def generate_debate(title):
-    return "真实性 / 影响范围 / 技术可行性存在讨论空间"
-
-
-def generate_angle(title):
-    return "可以从普通人影响 + 行业变化角度进行内容化表达"
-
-
 # =========================
-# 排序
-# =========================
-def rank(items):
-    return sorted(
-        items,
-        key=lambda x: x["score"] * 2 + x["comments"],
-        reverse=True
-    )
-
-
-# =========================
-# 主程序（V7）
+# 主程序
 # =========================
 def main():
 
-    print("START V7 CONTENT ENGINE")
+    items = fetch_reddit() + fetch_hn()
 
-    items = []
-    items += fetch_hackernews()
-    items += fetch_reddit()
+    # 排序 + 过滤爆点
+    items = sorted(items, key=score, reverse=True)
 
-    # 👉 内容生成层（核心升级）
-    items = [generate_content(i) for i in items]
+    top = items[:5]   # 🔥 只取爆款
 
-    # 排序
-    items = rank(items)
-
-    # 控制数量
-    items = items[:30]
+    contents = [make_content(i) for i in top]
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    content = []
-    content.append("🌍 GLOBAL HOT REPORT V7（内容生成版）")
-    content.append(f"📅 {date}")
-    content.append("")
+    out = []
 
-    for i, item in enumerate(items, 1):
-        content.append(f"{i}. {item['title']}")
-        content.append(f"   {item['type']}")
-        content.append(f"   🧠 发生：{item['happened']}")
-        content.append(f"   💥 为什么火：{item['why']}")
-        content.append(f"   ⚡ 争议点：{item['debate']}")
-        content.append(f"   📢 可传播角度：{item['angle']}")
-        content.append(f"   🔥 热度: {item['score']} | 💬 {item['comments']}")
-        content.append(f"   🌐 来源: {item['source']}")
-        content.append("")
+    out.append("🚀 CONTENT PACK（可发布版本）")
+    out.append(f"📅 {date}\n")
 
-    filename = f"global_hot_v7_{date}.txt"
+    for i, c in enumerate(contents, 1):
+
+        out.append(f"🔥 {i}. {c['title']}")
+        out.append("")
+
+        out.append("🎬 抖音脚本：")
+        out.append(c["douyin"])
+
+        out.append("📱 小红书：")
+        out.append(c["xhs"])
+
+        out.append("────────────────────\n")
+
+    filename = f"content_pack_{date}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
-        f.write("\n".join(content))
+        f.write("\n".join(out))
 
     print("DONE:", filename)
 
