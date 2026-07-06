@@ -4,52 +4,92 @@ from datetime import datetime
 
 
 # =========================
-# DATA SOURCES
+# DATA SOURCES (with URLs)
 # =========================
 
-def fetch_sources():
+def fetch_reddit():
+
+    url = "https://www.reddit.com/r/worldnews/hot.json?limit=10"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    try:
+        data = requests.get(url, headers=headers, timeout=10).json()
+
+        items = []
+
+        for p in data["data"]["children"]:
+            d = p["data"]
+
+            items.append({
+                "title": d.get("title"),
+                "source": "Reddit",
+                "url": "https://reddit.com" + d.get("permalink"),
+                "text": d.get("selftext", "")
+            })
+
+        return items
+
+    except:
+        return []
+
+
+def fetch_hn():
 
     items = []
 
-    # HN
     try:
-        hn = requests.get(
+        ids = requests.get(
             "https://hacker-news.firebaseio.com/v0/topstories.json",
             timeout=10
         ).json()
 
-        for i in hn[:20]:
+        for i in ids[:15]:
+
             item = requests.get(
                 f"https://hacker-news.firebaseio.com/v0/item/{i}.json",
                 timeout=10
             ).json()
 
-            if item:
-                items.append({
-                    "title": item.get("title", ""),
-                    "text": item.get("text", ""),
-                    "source": "HackerNews"
-                })
-    except:
-        pass
+            if not item:
+                continue
 
-    # RSS
+            items.append({
+                "title": item.get("title"),
+                "source": "HackerNews",
+                "url": item.get("url", ""),
+                "text": item.get("text", "")
+            })
+
+        return items
+
+    except:
+        return []
+
+
+def fetch_rss():
+
     feeds = [
         ("https://feeds.bbci.co.uk/news/rss.xml", "BBC"),
         ("https://techcrunch.com/feed/", "TechCrunch"),
         ("https://cointelegraph.com/rss", "CoinTelegraph")
     ]
 
+    items = []
+
     for url, source in feeds:
+
         try:
             feed = feedparser.parse(url)
 
             for e in feed.entries[:10]:
+
                 items.append({
                     "title": e.title,
-                    "text": e.get("summary", ""),
-                    "source": source
+                    "source": source,
+                    "url": e.link,
+                    "text": e.get("summary", "")
                 })
+
         except:
             continue
 
@@ -57,126 +97,104 @@ def fetch_sources():
 
 
 # =========================
-# SIGNAL GROUPING
+# SIGNAL DETECTION (REAL + SOURCE BOUND)
 # =========================
 
-def group_signals(items):
+def detect(item):
 
-    groups = {
-        "AI": [],
-        "MARKET": [],
-        "CRYPTO": [],
-        "MACRO": []
-    }
+    t = (item["title"] or "").lower()
+    text = (item.get("text") or "").lower()
+
+    score = 0
+    tags = []
+
+    # 💰 market signal
+    if any(k in t for k in ["bitcoin", "btc", "market", "fed", "inflation", "stock"]):
+        score += 4
+        tags.append("MARKET")
+
+    # 🧠 AI signal
+    if any(k in t for k in ["ai", "openai", "gpt", "google", "meta", "model"]):
+        score += 4
+        tags.append("AI")
+
+    # 🌍 macro
+    if any(k in t for k in ["war", "china", "us", "policy", "regulation"]):
+        score += 3
+        tags.append("MACRO")
+
+    # 🚨 strong event
+    if any(k in t for k in ["launch", "ban", "crash", "breakthrough", "record"]):
+        score += 2
+        tags.append("EVENT")
+
+    return score, tags
+
+
+# =========================
+# FILTER SIGNALS
+# =========================
+
+def build_signals(items):
+
+    signals = []
 
     for i in items:
 
-        t = (i["title"] + " " + i.get("text", "")).lower()
+        score, tags = detect(i)
 
-        if any(k in t for k in ["ai", "openai", "gpt", "model", "google", "meta"]):
-            groups["AI"].append(i)
+        if score >= 5:
 
-        if any(k in t for k in ["stock", "market", "fed", "inflation", "rate"]):
-            groups["MARKET"].append(i)
+            signals.append({
+                "title": i["title"],
+                "source": i["source"],
+                "url": i["url"],
+                "text": i.get("text", ""),
+                "score": score,
+                "tags": tags
+            })
 
-        if any(k in t for k in ["bitcoin", "btc", "crypto", "eth"]):
-            groups["CRYPTO"].append(i)
-
-        if any(k in t for k in ["war", "china", "us", "policy", "regulation"]):
-            groups["MACRO"].append(i)
-
-    return groups
-
-
-# =========================
-# INTERPRETATION ENGINE（核心升级）
-# =========================
-
-def interpret(name, items):
-
-    count = len(items)
-
-    # === 1. trend strength ===
-    if count >= 8:
-        strength = "STRONG TREND 🚨"
-    elif count >= 4:
-        strength = "BUILDING TREND 📈"
-    elif count >= 2:
-        strength = "WEAK SIGNAL ⚠️"
-    else:
-        strength = "NOISE / ISOLATED 🧊"
-
-    # === 2. interpretation logic ===
-    if name == "AI":
-        meaning = "AI industry is showing structural acceleration in model + agent adoption."
-        impact = "Impacts: software jobs, automation, enterprise tooling."
-    elif name == "MARKET":
-        meaning = "Macro liquidity and rate expectations are shifting."
-        impact = "Impacts: stocks, risk assets, investment sentiment."
-    elif name == "CRYPTO":
-        meaning = "Crypto is entering a renewed liquidity + regulatory phase."
-        impact = "Impacts: BTC price cycles, institutional adoption."
-    else:
-        meaning = "Macro geopolitical pressure is changing global risk structure."
-        impact = "Impacts: global markets, energy, risk sentiment."
-
-    # === 3. action layer ===
-    if count >= 4:
-        action = "WATCH CLOSELY → possible regime shift"
-    elif count >= 2:
-        action = "MONITOR → early signal forming"
-    else:
-        action = "IGNORE → no actionable signal"
-
-    return {
-        "name": name,
-        "strength": strength,
-        "count": count,
-        "meaning": meaning,
-        "impact": impact,
-        "action": action,
-        "samples": items[:3]
-    }
+    return sorted(signals, key=lambda x: x["score"], reverse=True)
 
 
 # =========================
-# OUTPUT ENGINE
+# OUTPUT ENGINE (核心升级)
 # =========================
 
-def build_report(analysis):
+def build_report(signals):
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    text = f"""
-🚨 SIGNAL INTERPRETATION v3
+    if not signals:
+        return f"""
+🌍 SOURCE-BOUND SIGNAL v1
 📅 {date}
 
-========================
+⚠️ No valid signals found today
 """
 
-    for k, v in analysis.items():
+    text = f"""
+🌍 SOURCE-BOUND SIGNAL v1
+📅 {date}
+
+====================================
+"""
+
+    for i, s in enumerate(signals, 1):
 
         text += f"""
-🔥 {k} SIGNAL
-{v['strength']}
-Event Count: {v['count']}
+【{i}】
+📌 TITLE: {s['title']}
+🏷 SOURCE: {s['source']}
+🔗 URL: {s['url']}
+⭐ SCORE: {s['score']}
+🏷 TAGS: {', '.join(s['tags'])}
 
-🧠 MEANING:
-{v['meaning']}
+🧠 EXTRACT:
+{s['text'][:300]}
 
-💰 IMPACT:
-{v['impact']}
-
-🎯 ACTION:
-{v['action']}
-
-📌 Examples:
+------------------------------------
 """
-
-        for s in v["samples"]:
-            text += f"- {s['title']}\n"
-
-        text += "\n------------------------\n"
 
     return text
 
@@ -187,23 +205,22 @@ Event Count: {v['count']}
 
 def main():
 
-    items = fetch_sources()
+    items = []
 
-    groups = group_signals(items)
+    items += fetch_reddit()
+    items += fetch_hn()
+    items += fetch_rss()
 
-    analysis = {}
+    signals = build_signals(items)
 
-    for k, v in groups.items():
-        analysis[k] = interpret(k, v)
+    report = build_report(signals)
 
-    report = build_report(analysis)
-
-    filename = f"signal_v3_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    filename = f"source_bound_signal_{datetime.now().strftime('%Y-%m-%d')}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print("DONE SIGNAL V3:", filename)
+    print("DONE SOURCE-BOUND v1:", filename)
 
 
 if __name__ == "__main__":
