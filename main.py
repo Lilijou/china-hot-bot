@@ -4,7 +4,7 @@ from datetime import datetime
 
 
 # =========================
-# DATA SOURCE
+# DATA SOURCES
 # =========================
 
 def fetch_sources():
@@ -18,7 +18,7 @@ def fetch_sources():
             timeout=10
         ).json()
 
-        for i in hn[:15]:
+        for i in hn[:20]:
             item = requests.get(
                 f"https://hacker-news.firebaseio.com/v0/item/{i}.json",
                 timeout=10
@@ -28,7 +28,6 @@ def fetch_sources():
                 items.append({
                     "title": item.get("title", ""),
                     "text": item.get("text", ""),
-                    "time": item.get("time", 0),
                     "source": "HackerNews"
                 })
     except:
@@ -49,7 +48,6 @@ def fetch_sources():
                 items.append({
                     "title": e.title,
                     "text": e.get("summary", ""),
-                    "time": 0,
                     "source": source
                 })
         except:
@@ -59,12 +57,12 @@ def fetch_sources():
 
 
 # =========================
-# TREND DETECTION CORE
+# SIGNAL GROUPING
 # =========================
 
-def detect_trend(items):
+def group_signals(items):
 
-    trends = {
+    groups = {
         "AI": [],
         "MARKET": [],
         "CRYPTO": [],
@@ -75,73 +73,112 @@ def detect_trend(items):
 
         t = (i["title"] + " " + i.get("text", "")).lower()
 
-        # AI trend
         if any(k in t for k in ["ai", "openai", "gpt", "model", "google", "meta"]):
-            trends["AI"].append(i)
+            groups["AI"].append(i)
 
-        # market trend
         if any(k in t for k in ["stock", "market", "fed", "inflation", "rate"]):
-            trends["MARKET"].append(i)
+            groups["MARKET"].append(i)
 
-        # crypto trend
         if any(k in t for k in ["bitcoin", "btc", "crypto", "eth"]):
-            trends["CRYPTO"].append(i)
+            groups["CRYPTO"].append(i)
 
-        # macro
         if any(k in t for k in ["war", "china", "us", "policy", "regulation"]):
-            trends["MACRO"].append(i)
+            groups["MACRO"].append(i)
 
-    return trends
+    return groups
 
 
 # =========================
-# TREND SCORING (核心升级)
+# INTERPRETATION ENGINE（核心升级）
 # =========================
 
-def trend_score(group):
+def interpret(name, items):
 
-    if len(group) >= 5:
-        return 10   # 强趋势
-    elif len(group) >= 3:
-        return 7    # 中趋势
-    elif len(group) >= 2:
-        return 5    # 弱趋势
+    count = len(items)
+
+    # === 1. trend strength ===
+    if count >= 8:
+        strength = "STRONG TREND 🚨"
+    elif count >= 4:
+        strength = "BUILDING TREND 📈"
+    elif count >= 2:
+        strength = "WEAK SIGNAL ⚠️"
     else:
-        return 2    # 噪音
+        strength = "NOISE / ISOLATED 🧊"
+
+    # === 2. interpretation logic ===
+    if name == "AI":
+        meaning = "AI industry is showing structural acceleration in model + agent adoption."
+        impact = "Impacts: software jobs, automation, enterprise tooling."
+    elif name == "MARKET":
+        meaning = "Macro liquidity and rate expectations are shifting."
+        impact = "Impacts: stocks, risk assets, investment sentiment."
+    elif name == "CRYPTO":
+        meaning = "Crypto is entering a renewed liquidity + regulatory phase."
+        impact = "Impacts: BTC price cycles, institutional adoption."
+    else:
+        meaning = "Macro geopolitical pressure is changing global risk structure."
+        impact = "Impacts: global markets, energy, risk sentiment."
+
+    # === 3. action layer ===
+    if count >= 4:
+        action = "WATCH CLOSELY → possible regime shift"
+    elif count >= 2:
+        action = "MONITOR → early signal forming"
+    else:
+        action = "IGNORE → no actionable signal"
+
+    return {
+        "name": name,
+        "strength": strength,
+        "count": count,
+        "meaning": meaning,
+        "impact": impact,
+        "action": action,
+        "samples": items[:3]
+    }
 
 
 # =========================
-# BUILD SIGNAL REPORT
+# OUTPUT ENGINE
 # =========================
 
-def build(trends):
+def build_report(analysis):
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    report = f"""
-🚨 SIGNAL DETECTION v2 (TREND SYSTEM)
+    text = f"""
+🚨 SIGNAL INTERPRETATION v3
 📅 {date}
 
 ========================
 """
 
-    for k, v in trends.items():
+    for k, v in analysis.items():
 
-        score = trend_score(v)
+        text += f"""
+🔥 {k} SIGNAL
+{v['strength']}
+Event Count: {v['count']}
 
-        report += f"""
-【{k} TREND】
-🔥 Trend Score: {score}
-📊 Event Count: {len(v)}
+🧠 MEANING:
+{v['meaning']}
 
+💰 IMPACT:
+{v['impact']}
+
+🎯 ACTION:
+{v['action']}
+
+📌 Examples:
 """
 
-        for i in v[:5]:
-            report += f"- {i['title']}\n"
+        for s in v["samples"]:
+            text += f"- {s['title']}\n"
 
-        report += "\n------------------------\n"
+        text += "\n------------------------\n"
 
-    return report
+    return text
 
 
 # =========================
@@ -152,16 +189,21 @@ def main():
 
     items = fetch_sources()
 
-    trends = detect_trend(items)
+    groups = group_signals(items)
 
-    report = build(trends)
+    analysis = {}
 
-    filename = f"signal_v2_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    for k, v in groups.items():
+        analysis[k] = interpret(k, v)
+
+    report = build_report(analysis)
+
+    filename = f"signal_v3_{datetime.now().strftime('%Y-%m-%d')}.txt"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print("DONE SIGNAL V2:", filename)
+    print("DONE SIGNAL V3:", filename)
 
 
 if __name__ == "__main__":
